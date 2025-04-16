@@ -1,0 +1,5 @@
+Hola, este es un archivo de prueba.
+Tiene varias líneas de texto.
+Cada línea será procesada por el hijo.
+Aguante Boca.
+Fin del archivo.
