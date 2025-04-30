@@ -1,0 +1,57 @@
+1. Estructura de la conversación
+
+La conversación siguió una estructura altamente organizada y progresiva, iniciando con un prompt bien diseñado por vos que estableció claramente los objetivos, temas a cubrir y reglas de interacción. A partir de ahí, se desarrolló una guía paso a paso, con un enfoque temático que evolucionó naturalmente desde lo más conceptual (¿qué son las señales?) hasta aspectos avanzados como el manejo en sistemas multihilo y comparaciones con otros mecanismos IPC.
+
+No hubo cambios bruscos de enfoque, pero sí una evolución en el nivel de dificultad y profundidad a medida que se avanzaba, lo cual fue coherente con una secuencia didáctica sólida.
+2. Claridad y profundidad
+
+La conversación tuvo un excelente equilibrio entre claridad y profundidad. Cada tema fue abordado en tres niveles:
+
+    Conceptual: con explicaciones teóricas claras.
+
+    Práctico: mediante ejemplos de código funcionales y comentados.
+
+    Reflexivo: con preguntas de comprensión y ejercicios.
+
+Se profundizó especialmente en:
+
+    La diferencia entre señales síncronas y asíncronas.
+
+    El uso seguro de signal.signal() y os.kill().
+
+    La naturaleza de los handlers y qué funciones son async-signal-safe.
+
+Estas ideas quedaron consolidadas gracias a la integración entre explicación, ejecución y evaluación inmediata.
+3. Patrones de aprendizaje
+
+Se observaron patrones de aprendizaje activo y progresivo. Fuiste avanzando sección por sección, solicitando continuar solo después de entender la anterior. Este es un patrón de aprendizaje reflexivo y autorregulado.
+
+Los temas que más atención y precisión requirieron fueron:
+
+    La relación entre procesos y señales (os.kill(), signal.pause()).
+
+    Limitaciones en entornos multihilo.
+
+    El uso de funciones seguras dentro de handlers.
+
+También hubo un interés en integrar todo en un ejercicio práctico que fuera útil para la entrega, lo cual refuerza un aprendizaje orientado a la aplicación real.
+4. Aplicación y reflexión
+
+La conversación estuvo altamente contextualizada en tu experiencia como estudiante de Computación II en la Universidad de Mendoza. No fue solo teoría, sino una preparación directa para una entrega obligatoria. Esto implicó:
+
+    Conectar lo aprendido con la terminal, el uso real de señales entre scripts, y el entorno de trabajo en Python.
+
+    Considerar aspectos que afectan a sistemas reales (limitaciones de los handlers, concurrencia).
+
+    Valorar cuándo usar señales y cuándo otros mecanismos de IPC según el caso.
+
+La guía también incluyó momentos de puesta en común, donde se te motivó a compartir el código con el profesor y reflexionar sobre lo aprendido.
+5. Observaciones adicionales
+
+    Mostrás un perfil de aprendizaje estructurado, activo y orientado a la comprensión profunda, pero también con alta exigencia hacia la utilidad práctica.
+
+    Tus reglas iniciales sobre cómo debía desarrollarse la guía reflejan un enfoque metacognitivo avanzado: sabés cómo necesitás aprender.
+
+    Una buena estrategia futura sería acompañar estas guías con una hoja resumen de comandos clave, errores comunes y mejores prácticas.
+
+    También puede ayudarte armar un esquema visual (mapa mental o diagrama de flujo) para relacionar tipos de señales, funciones de manejo y restricciones por contexto (single-thread vs multithread, fork vs signal, etc.).
