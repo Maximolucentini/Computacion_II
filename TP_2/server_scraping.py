@@ -40,7 +40,7 @@ PROCESSING_SERVER_PORT = 9000
 
 SCRAPING_TIMEOUT_SECONDS = 30
 DEFAULT_CACHE_TTL_SECONDS = 3600  # 1 hora
-
+DEFAULT_MAX_HTML_SIZE_MB = 10.0
 
 class ScrapingError(Exception):
     """Error de alto nivel durante el scraping."""
@@ -82,10 +82,12 @@ class ScraperService:
         workers: int,
         rate_limit_per_minute: Optional[int] = None,
         cache_ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS,
+        max_html_size_mb: float = DEFAULT_MAX_HTML_SIZE_MB,
     ) -> None:
         self._workers = max(1, int(workers))
         self._semaphore = asyncio.Semaphore(self._workers)
         self._session: Optional[aiohttp.ClientSession] = None
+        self._max_html_size_mb = max_html_size_mb
 
         # Rate limiting
         self._rate_limit_per_minute = rate_limit_per_minute if rate_limit_per_minute and rate_limit_per_minute > 0 else None
@@ -215,7 +217,7 @@ class ScraperService:
             if job is not None:
                 job.status = "scraping"
 
-            html, final_url = await fetch_html(url, session=self._session)
+            html, final_url = await fetch_html(url, session=self._session,max_size_mb=self._max_html_size_mb)
 
             # 4) Parsing HTML
             scraping_data = extract_page_data(html, base_url=final_url)
@@ -407,9 +409,10 @@ async def scrape_handler(request: web.Request) -> web.Response:
         )
     except HttpError as exc:
         logging.warning("Error al hacer scraping: %s", exc)
+        status_code = 413 if "demasiado grande" in str(exc).lower() else 502
         return web.json_response(
             {"status": "error", "error": str(exc)},
-            status=502,
+            status=status_code,
         )
     except Exception as exc:  # noqa: BLE001
         logging.exception("Error inesperado en /scrape")
@@ -580,6 +583,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_CACHE_TTL_SECONDS,
         help="TTL de la caché en segundos (0 = sin caché, default: 3600)",
     )
+    parser.add_argument(
+        "--max-html-size",
+        type=float,
+        default=DEFAULT_MAX_HTML_SIZE_MB,
+        help="Tamaño máximo de HTML en MB (default: 10.0)",
+    ) 
     return parser.parse_args()
 
 
@@ -587,12 +596,14 @@ def create_app(
     workers: int,
     rate_limit: int,
     cache_ttl: int,
+    max_html_size: float,
 ) -> web.Application:
     app = web.Application()
     scraper_service = ScraperService(
         workers=workers,
         rate_limit_per_minute=rate_limit,
         cache_ttl_seconds=cache_ttl,
+        max_html_size_mb=max_html_size,
     )
     app["scraper_service"] = scraper_service
 
@@ -637,6 +648,7 @@ def main() -> None:
         workers=args.workers,
         rate_limit=args.rate_limit,
         cache_ttl=args.cache_ttl,
+        max_html_size=args.max_html_size,
     )
 
     web.run_app(app, host=args.ip, port=args.port)

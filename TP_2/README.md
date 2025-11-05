@@ -15,6 +15,8 @@ Además se implementan las **3 opciones del Bonus Track**:
 2. **Rate limiting por dominio + caché en memoria con TTL**
 3. **Análisis avanzado** en el Servidor B (tecnologías, SEO, JSON-LD, accesibilidad)
 
+El servidor de scraping también incluye un **límite configurable de tamaño máximo de HTML**, para evitar descargar páginas demasiado grandes y proteger recursos.
+
 ---
 
 ## Requisitos previos
@@ -83,7 +85,7 @@ TP2/
 │   ├── __init__.py
 │   ├── html_parser.py          # Parsing HTML + estructura + lista de imágenes
 │   ├── metadata_extractor.py   # Extracción de meta tags (description, keywords, og:*)
-│   └── async_http.py           # Cliente HTTP asíncrono (aiohttp)
+│   └── async_http.py           # Cliente HTTP asíncrono (aiohttp + límite de tamaño)
 ├── processor/
 │   ├── __init__.py
 │   ├── screenshot.py           # Generación de screenshot (Selenium + fallback Pillow)
@@ -95,7 +97,7 @@ TP2/
 │   ├── protocol.py             # Protocolo length(4 bytes) + JSON para sockets
 │   └── serialization.py        # Serialización JSON <-> bytes
 ├── tests/
-│   ├── test_scraper.py         # Tests del servidor A (incluye cola de tareas)
+│   ├── test_scraper.py         # Tests del servidor A (cola de tareas + límite HTML)
 │   └── test_processor.py       # Tests de funciones de procesamiento (servidor B)
 ├── requirements.txt
 └── README.md
@@ -111,7 +113,7 @@ En una terminal:
 
 ```bash
 cd TP2
-source .venv/bin/activate            # en Windows: .\.venv\Scriptsctivate
+source .venv/bin/activate            # en Windows: .\.venv\Scripts\Activate.ps1
 python server_processing.py -i 127.0.0.1 -p 9000 -n 4
 ```
 
@@ -127,7 +129,7 @@ Responsabilidades del servidor B:
 - Recibir solicitudes desde A por sockets TCP.  
 - Ejecutar en procesos separados:
   - **Captura de screenshot** (PNG, base64).  
-  - **Análisis de rendimiento** (tiempo de carga, tamaño, número de requests).  
+  - **Análisis de rendimiento** (tiempo de carga, tamaño total, número de requests).  
   - **Análisis de imágenes** (thumbnails).  
   - **Análisis avanzado** (bonus): tecnologías, SEO, JSON-LD, accesibilidad.  
 - Devolver resultados a A mediante el protocolo definido.
@@ -141,7 +143,7 @@ En otra terminal:
 ```bash
 cd TP2
 source .venv/bin/activate
-python server_scraping.py -i 127.0.0.1 -p 8000 -w 4 -r 60 --cache-ttl 3600
+python server_scraping.py -i 127.0.0.1 -p 8000 -w 4 -r 60 --cache-ttl 3600 --max-html-size 10
 ```
 
 Parámetros:
@@ -151,11 +153,14 @@ Parámetros:
 - `-w / --workers` : cantidad de tareas concurrentes máximas (semáforo asyncio).  
 - `-r / --rate-limit` : máximo de requests por minuto por dominio (0 = sin límite).  
 - `--cache-ttl` : TTL en segundos de la caché en memoria (0 = sin caché).
+- `--max-html-size` : **tamaño máximo de HTML en MB** (default: `10`).  
+  Si el servidor detecta (por `Content-Length` o por la suma de chunks) que la página supera ese límite, **cancela la descarga y devuelve un error controlado**.
 
 Responsabilidades del servidor A:
 
 - Recibir URLs vía HTTP.  
 - Hacer **scraping asíncrono** de la página (no bloquear el event loop).  
+- Aplicar límite de tamaño de HTML antes de descargar demasiado contenido.  
 - Extraer:
   - Título  
   - Links  
@@ -290,18 +295,10 @@ Formato de respuesta :
 }
 ```
 
-En caso de error (URL inválida, timeout, errores HTTP, etc.) se devuelve:
-
-```json
-{
-  "status": "error",
-  "error": "Mensaje descriptivo..."
-}
-```
-
-con códigos HTTP apropiados:
+En caso de error se devuelve un JSON con `"status": "error"` y mensaje descriptivo, con códigos HTTP apropiados:
 
 - `400` → URL inválida / parámetros faltantes  
+- `413` → **HTML demasiado grande** (supera `--max-html-size`)  
 - `502` → error al hacer scraping (problemas de red, HTTP 4xx/5xx)  
 - `500` → error interno inesperado  
 
@@ -377,47 +374,69 @@ GET /result/{task_id}
 
 Siguiendo las consignas del TP:
 
-- **URLs inválidas**:  
+- **URLs inválidas**  
   - Se valida esquema (`http`/`https`) y host con `urllib.parse`.  
   - Respuesta: HTTP 400 + JSON `{"status": "error", "error": "..."}`
-- **Timeouts de scraping**:  
+- **Timeouts de scraping**  
   - Se usa `aiohttp.ClientTimeout(total=30)` y se captura `asyncio.TimeoutError`.  
   - Respuesta: HTTP 502 con mensaje de timeout.
-- **Errores HTTP (4xx/5pxx)**:  
+- **Errores HTTP (4xx/5xx)**  
   - `resp.raise_for_status()` lanza excepción capturada como `HttpError`.  
   - Respuesta: HTTP 502 con mensaje de error HTTP.
-- **Errores de comunicación A ↔ B**:  
+- **HTML demasiado grande**  
+  - En `scraper/async_http.py` se controla tanto el encabezado `Content-Length` como el tamaño real acumulado por chunks.  
+  - Si se supera el límite configurado (`--max-html-size` en MB), se lanza `ContentTooLargeError` y el servidor A responde con **HTTP 413** y un JSON de error.
+- **Errores de comunicación A ↔ B**  
   - Se capturan `ConnectionRefusedError`, `asyncio.TimeoutError`, `OSError`.  
   - En ese caso se devuelve igualmente el `scraping_data`, pero `processing_status = "failed"` y `processing_data` con campos `None`/vacíos.
-- **Errores en el pool de procesos (B)**:  
+- **Errores en el pool de procesos (B)**  
   - Se captura la excepción al hacer `future.result()` y se responde con `"status": "error"` hacia A, que luego lo traduce.
 
 ---
 
 ## Tests
 
-Con ambos servidores corriendo:
+Con el entorno virtual activo:
 
 ```bash
 cd TP2
 source .venv/bin/activate
 
-# Tests del servidor A (asyncio + cola de tareas)
+# Tests del servidor A (asyncio, cola de tareas y límite de tamaño de HTML)
 python -m tests.test_scraper
 
 # Tests de funciones de procesamiento del servidor B
 python -m tests.test_processor
 ```
 
-Ambos archivos usan `unittest` y `aiohttp`:
+### `tests/test_scraper.py`
 
-- `test_scraper.py`:
-  - Verifica que `/scrape?url=https://example.com` devuelva `status == "success"` y tenga las claves esperadas.
-  - Verifica el manejo de una URL inválida (HTTP 400).  
-  - Prueba el flujo completo de la cola de tareas (`/tasks`, `/status`, `/result`).
+Incluye pruebas de:
 
-- `test_processor.py`:
-  - Testea `analyze_performance`, `generate_thumbnails` y `analyze_advanced` con HTML sintético.
+- **Caso feliz de scraping** sobre `https://example.com`, verificando que:
+  - El servidor A responde con HTTP 200.
+  - El JSON tiene `status == "success"` y las claves esperadas en `scraping_data` y `processing_data`.
+- **URLs inválidas**:  
+  - Chequea que se devuelva HTTP 400 y un mensaje de error adecuado.
+- **Cola de tareas (Bonus Opción 1)**:  
+  - Flujo completo con creación de tarea (`/tasks`), consulta de estado (`/status/{task_id}`) y obtención de resultado (`/result/{task_id}`).
+- **Límite máximo de HTML con mocks**:  
+  - Tests unitarios de `fetch_html` usando `unittest.mock` para simular respuestas HTTP:
+    - Caso donde `Content-Length` o el tamaño acumulado **supera** `max_html_size`: se verifica que se lance `ContentTooLargeError` con un mensaje descriptivo.
+    - Caso donde el contenido está **dentro del límite**: se verifica que se devuelva correctamente el HTML decodificado y la URL final.
+
+De esta forma el comportamiento del **tamaño máximo de HTML** queda verificado de forma automática sin depender de páginas reales gigantes.
+
+### `tests/test_processor.py`
+
+Pruebas sobre el servidor B (a nivel de funciones):
+
+- `analyze_performance`:  
+  - Recibe un HTML sintético y devuelve métricas (`load_time_ms`, `total_size_kb`, `num_requests`).
+- `generate_thumbnails`:  
+  - Verifica que se manejen correctamente las descargas fallidas y que las miniaturas se generen (o se devuelva lista vacía) sin romper.
+- `analyze_advanced`:  
+  - Usa un HTML de ejemplo con tags típicos para probar detección de tecnologías, SEO básico, JSON-LD y accesibilidad.
 
 ---
 
@@ -431,20 +450,20 @@ Ambos archivos usan `unittest` y `aiohttp`:
 
 ## Resumen de cobertura de consignas
 
-- **Parte A – Servidor Asyncio**:  
+- **Parte A – Servidor Asyncio**  
   - Uso de `asyncio` + `aiohttp`.  
   - Scraping asíncrono, extracción de título, links, meta tags, estructura H1–H6, cantidad de imágenes.  
   - Comunicación asíncrona con el servidor B mediante sockets TCP y protocolo length+JSON.
+  - Límite de tamaño máximo de HTML configurable y manejo de error correspondiente (HTTP 413).
 
-- **Parte B – Servidor Multiprocessing**:  
+- **Parte B – Servidor Multiprocessing**  
   - Uso de `socketserver` + `ProcessPoolExecutor` (multiprocessing).  
   - Screenshot, análisis de rendimiento, thumbnails de imágenes.  
 
-- **Parte C – Transparencia para el Cliente**:  
+- **Parte C – Transparencia para el Cliente**  
   - Cliente solo habla con A; B es completamente transparente.  
 
-- **Bonus Track**:  
+- **Bonus Track**  
   - Opción 1: sistema de cola con `task_id` y endpoints `/tasks`, `/status/{task_id}`, `/result/{task_id}`.  
   - Opción 2: rate limiting por dominio + caché en memoria con TTL.  
   - Opción 3: análisis avanzado en B (tecnologías, SEO, JSON-LD, accesibilidad).
-

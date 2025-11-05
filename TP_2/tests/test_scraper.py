@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from typing import Any, Dict, Tuple
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 
@@ -148,6 +149,86 @@ class ScraperServerTests(unittest.TestCase):
                 self.assertIn("processing_data", result)
 
         asyncio.run(_flow())
+        
+    def test_scrape_content_too_large_mock(self) -> None:
+        """
+        Test para verificar que el límite de tamaño de HTML funciona.
+        
+        Usa mocking para simular una respuesta muy grande sin necesidad
+        de descargar contenido real.
+        """
+        async def _test() -> None:
+            from scraper.async_http import fetch_html, ContentTooLargeError
+            
+            # Mock de la respuesta HTTP
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.headers = {'Content-Length': '20971520'}  # 20 MB
+            mock_response.url = "https://example.com"
+            mock_response.raise_for_status = MagicMock()
+            
+            # Mock del ClientSession
+            mock_session = MagicMock()
+            mock_session.get = MagicMock()
+            mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+            
+            # Intentar descargar con límite de 10 MB
+            with self.assertRaises(ContentTooLargeError) as context:
+                await fetch_html(
+                    "https://example.com",
+                    session=mock_session,
+                    max_size_mb=10.0
+                )
+            
+            error_msg = str(context.exception)
+            self.assertIn("demasiado grande", error_msg.lower())
+            self.assertIn("20", error_msg)  # Debería mencionar 20 MB
+            self.assertIn("10", error_msg)  # Debería mencionar el límite de 10 MB
+        
+        asyncio.run(_test())
+
+    def test_scrape_content_within_limit_mock(self) -> None:
+        """
+        Test para verificar que contenido dentro del límite se descarga bien.
+        """
+        async def _test() -> None:
+            from scraper.async_http import fetch_html
+            
+            # Mock de la respuesta HTTP con contenido pequeño
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.headers = {'Content-Length': '5000'}  # 5 KB
+            mock_response.url = "https://example.com"
+            mock_response.raise_for_status = MagicMock()
+            mock_response.get_encoding = MagicMock(return_value='utf-8')
+            
+            # Mock del content.iter_chunked
+            small_html = b"<html><body>Test content</body></html>"
+            async def async_iter():
+                yield small_html
+            
+            mock_response.content.iter_chunked = MagicMock(return_value=async_iter())
+            
+            # Mock del ClientSession
+            mock_session = MagicMock()
+            mock_session.get = MagicMock()
+            mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+            
+            # Descargar con límite de 10 MB (debe funcionar)
+            html, final_url = await fetch_html(
+                "https://example.com",
+                session=mock_session,
+                max_size_mb=10.0
+            )
+            
+            self.assertIsInstance(html, str)
+            self.assertIn("Test content", html)
+            self.assertEqual(final_url, "https://example.com")
+        
+        asyncio.run(_test())
+
 
 
 if __name__ == "__main__":
